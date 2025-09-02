@@ -1,0 +1,59 @@
+### OpenLDAP replication Master/Slave
+
+On Mail01 access /etc/openldap/slapd.conf and modify it like this
+
+moduleload syncprov
+overlay syncprov
+syncprov-checkpoint 100 10
+syncprov-sessionlog 200
+
+On Mail02 modify /etc/openldap/slapd.conf like this (replication is on one minute)
+vmail password is in iRedMail.tips file on server 01
+
+syncrepl rid=001
+         provider=ldap://mail01:389
+         searchbase="dc=cumulonimbus,dc=rs"
+         bindmethod=simple
+         binddn="cn=vmail,dc=cumulonimbus,dc=rs"
+         credentials=erec3xiThBUW9QnnU9Bnifp3434
+         schemachecking=on
+         type=refreshOnly
+         retry="60 +"
+         scope=sub
+         interval=00:00:01:00
+         attrs="*,+"
+
+
+### MySQL replication Master/Master
+
+--- Mail 01
+create user 'replicator'@'10.18.14.133' identified by 'Senjorita_Por_Favor_2025';
+grant replication slave on *.* to 'replicator'@'10.18.14.133';
+show master status;
++--------------------+----------+--------------------------------------+---------------------------------------+
+| File               | Position | Binlog_Do_DB                         | Binlog_Ignore_DB                      |
++--------------------+----------+--------------------------------------+---------------------------------------+
+| mariadb-bin.000001 |     1134 | amavisd,iredadmin,roundcubemail,sogo | test,information_schema,mysql,iredapd |
++--------------------+----------+--------------------------------------+---------------------------------------+
+stop slave
+# CHANGE LOG FILE and LOG POS from show master status output from mail 02
+CHANGE MASTER TO MASTER_HOST='10.18.14.132', MASTER_USER='replicator', MASTER_PASSWORD='Senjorita_Por_Favor_2025', MASTER_LOG_FILE='mariadb-bin.000001', MASTER_LOG_POS=1134;
+start slave
+show slave status \G
+
+--- Mail 02
+create user 'replicator'@'10.18.14.132' identified by 'Senjorita_Por_Favor_2025';
+grant replication slave on *.* to 'replicator'@'10.18.14.132';
+
+stop slave;
+# CHANGE LOG FILE and LOG POS from show master status output from mail 01
+CHANGE MASTER TO MASTER_HOST='10.18.14.132', MASTER_USER='replicator', MASTER_PASSWORD='Senjorita_Por_Favor_2025', MASTER_LOG_FILE='mariadb-bin.000001', MASTER_LOG_POS=1134;
+start slave;
+
+show master status;
++--------------------+----------+--------------------------------------+---------------------------------------+
+| File               | Position | Binlog_Do_DB                         | Binlog_Ignore_DB                      |
++--------------------+----------+--------------------------------------+---------------------------------------+
+| mariadb-bin.000001 |     1134 | amavisd,iredadmin,roundcubemail,sogo | test,information_schema,mysql,iredapd |
++--------------------+----------+--------------------------------------+---------------------------------------+
+show slave status \G
