@@ -57,3 +57,96 @@ show master status;
 | mariadb-bin.000001 |     1134 | amavisd,iredadmin,roundcubemail,sogo | test,information_schema,mysql,iredapd |
 +--------------------+----------+--------------------------------------+---------------------------------------+
 show slave status \G
+
+### Test LDAP Replica
+
+Get vmail passwd from iRedMail.tips file
+ldapsearch -w t4LGG5o5B8dX8aNmiRD7LonCiBCaU12L -D cn=vmail,dc=cumulonimbus,dc=rs -h 127.0.0.1 -b o=domains,dc=cumulonimbus,dc=rs
+
+### IREDAPD disable greylisting policy
+python3 /opt/iredapd/tools/greylisting_admin.py --disable --from '@.'
+
+
+### Install PHPLDAP Admin
+dnf install phpldapadmin
+
+In /etc/phpldapadmin/config.php file lines 452 and 453
+
+// $servers->setValue('login','attr','dn');
+$servers->setValue('login','attr','uid');
+
+Remove comment from 452 and add comment to 453 so it looks like:
+
+$servers->setValue('login','attr','dn');
+// $servers->setValue('login','attr','uid');
+
+Add symlink for phpldapadmin
+
+ln -s /usr/share/phpldapadmin /var/www/html
+
+Change group for phpldapadmin config.php file
+chgrp nginx /etc/phpldapadmin/config.php
+
+To login to PHPLDAPAdmin use Manager DN from iRedMail.tips
+
+### Setup Reverse DNS record
+
+On SpaceAdmins NS 01, edit /var/named/206.20.178.in-addr.zone file. Change Serial and add required PTR record.
+systemctl reload named
+
+### Configuring DKIM keys
+
+Generate new key for cumulonimbus.rs (COPY FROM OLD SERVERS)
+### amavisd -c /etc/amavisd/amavisd.conf genrsa /var/lib/dkim/cumulonimbus.rs.pem
+chown amavis: /var/lib/dkim/cumulonimbus.rs.pem
+chmod 400 /var/lib/dkim/cumulonimbus.rs.pem
+
+Add new key to amavisd.conf file
+dkim_key('cumulonimbus.rs', 'dkim', '/var/lib/dkim/cumulonimbus.rs.pem');
+
+Change bysender maps:
+@dkim_signature_options_bysender_maps = ({
+    # 'd' defaults to a domain of an author/sender address,
+    # 's' defaults to whatever selector is offered by a matching key
+
+    # Per-domain dkim key
+    #"domain.com"  => { d => "domain.com", a => 'rsa-sha256', ttl => 10*24*3600 },
+
+    # catch-all (one dkim key for all domains)
+    '.' => {d => 'cumulonimbus.rs',
+            a => 'rsa-sha256',
+            c => 'relaxed/simple',
+            ttl => 30*24*3600 },
+});
+
+Copy key to mail 02, give right permissions and change amavisd config
+
+Test if key is OK
+
+amavisd -c /etc/amavisd/amavisd.conf testkeys
+
+We should see the result PASS for cumulonimbus key
+
+TESTING#2 cumulonimbus.rs: dkim._domainkey.cumulonimbus.rs => pass
+
+### Configuring USER DNS
+
+To be able to receive mail for the @ENTER DOMAIN HERE@, the owner of the @ENTER DOMAIN HERE@ domain should
+configure DNS as follows:
+
+@ENTER DOMAIN HERE@.       1M    IN  TXT "v=spf1 mx -all"
+
+dkim._domainkey  3600 TXT (
+  "v=DKIM1; p="
+  "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCr+syZL2R32Nc1zFL7/WiX2OAu"
+  "3FbDvscPmP5ft5gbhYDzNnGR7LSI16zmID/kgf4eI+QI1hmFqdOPipqp9sdDYuLj"
+  "dE/PTnpaAzBM+y2hipbEPdWe7FsAluwD6fxJFM1YNciMUJPhVrsWZAE0wCA/GAKj"
+  "h47ch5IP/CuqtvgT5QIDAQAB")
+
+
+_dmarc  1M      IN      TXT "v=DMARC1; p=none; pct=100; rua=mailto:dmarc@@ENTER DOMAIN HERE@"
+
+Old MX record should be removed, and new one configured:
+
+@ENTER DOMAIN HERE@.    IN    MX    10    grdt-mail.cumulonimbus.rs
+
